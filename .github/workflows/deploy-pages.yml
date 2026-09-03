@@ -21,18 +21,6 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build static site
-        run: npm run build
-
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
