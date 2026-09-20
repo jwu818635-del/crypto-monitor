@@ -3,6 +3,7 @@
   "title": "Crypto technical monitor",
   "generatedAt": "2026-09-03T04:20:53.386Z",
   "status": "reviewed",
+  "buildStatus": "complete",
   "filters": [],
   "queries": {
     "market_prices": {
@@ -41187,6 +41188,47 @@
           "Technical indicators are descriptive calculations from loaded price and volume data, not forecasts or investment advice."
         ]
       }
+    },
+    "focus_multitimeframe": {
+      "rows": [
+        { "ticker": "SOL", "timeframe": "15m", "close": 108.55, "middle": 108.6835, "upper": 109.23210824, "lower": 108.13489176, "pctB": 0.38, "bandwidthPct": 1.01, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "SOL", "timeframe": "1h", "close": 108.55, "middle": 110.422, "upper": 113.04767782, "lower": 107.79632218, "pctB": 0.14, "bandwidthPct": 4.76, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "SOL", "timeframe": "1d", "close": 108.55, "middle": 102.95, "upper": 110.89875085, "lower": 95.00124915, "pctB": 0.85, "bandwidthPct": 15.44, "candleClose": "2026-09-20T23:59:59.999Z" },
+        { "ticker": "BTC", "timeframe": "15m", "close": 80340, "middle": 80423.04, "upper": 80598.21941306, "lower": 80247.86058694, "pctB": 0.26, "bandwidthPct": 0.44, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "BTC", "timeframe": "1h", "close": 80340, "middle": 81077.705, "upper": 82032.57533529, "lower": 80122.83466471, "pctB": 0.11, "bandwidthPct": 2.36, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "BTC", "timeframe": "1d", "close": 80340, "middle": 78430.185, "upper": 81924.54745386, "lower": 74935.82254614, "pctB": 0.77, "bandwidthPct": 8.91, "candleClose": "2026-09-20T23:59:59.999Z" },
+        { "ticker": "BNB", "timeframe": "15m", "close": 748.14, "middle": 750.007, "upper": 752.62687099, "lower": 747.38712901, "pctB": 0.14, "bandwidthPct": 0.7, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "BNB", "timeframe": "1h", "close": 748.14, "middle": 760.305, "upper": 775.696714, "lower": 744.913286, "pctB": 0.1, "bandwidthPct": 4.05, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "BNB", "timeframe": "1d", "close": 748.14, "middle": 730.015, "upper": 774.71682748, "lower": 685.31317252, "pctB": 0.7, "bandwidthPct": 12.25, "candleClose": "2026-09-20T23:59:59.999Z" },
+        { "ticker": "ETH", "timeframe": "15m", "close": 2578.34, "middle": 2579.557, "upper": 2587.49441293, "lower": 2571.61958707, "pctB": 0.42, "bandwidthPct": 0.62, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "ETH", "timeframe": "1h", "close": 2578.34, "middle": 2618.874, "upper": 2673.03580108, "lower": 2564.71219892, "pctB": 0.13, "bandwidthPct": 4.14, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "ETH", "timeframe": "1d", "close": 2578.33, "middle": 2488.623, "upper": 2616.15007698, "lower": 2361.09592302, "pctB": 0.85, "bandwidthPct": 10.25, "candleClose": "2026-09-20T23:59:59.999Z" },
+        { "ticker": "UNI", "timeframe": "15m", "close": 8.706, "middle": 8.75975, "upper": 8.88443821, "lower": 8.63506179, "pctB": 0.28, "bandwidthPct": 2.85, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "UNI", "timeframe": "1h", "close": 8.706, "middle": 8.7633, "upper": 9.04057106, "lower": 8.48602894, "pctB": 0.4, "bandwidthPct": 6.33, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "UNI", "timeframe": "1d", "close": 8.706, "middle": 6.8217, "upper": 8.70625173, "lower": 4.93714827, "pctB": 1, "bandwidthPct": 55.25, "candleClose": "2026-09-20T23:59:59.999Z" },
+        { "ticker": "SUI", "timeframe": "15m", "close": 0.8172, "middle": 0.82256, "upper": 0.82825751, "lower": 0.81686249, "pctB": 0.03, "bandwidthPct": 1.39, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "SUI", "timeframe": "1h", "close": 0.8172, "middle": 0.84767, "upper": 0.88397747, "lower": 0.81136253, "pctB": 0.08, "bandwidthPct": 8.57, "candleClose": "2026-09-20T07:59:59.999Z" },
+        { "ticker": "SUI", "timeframe": "1d", "close": 0.8173, "middle": 0.76238, "upper": 0.85638991, "lower": 0.66837009, "pctB": 0.79, "bandwidthPct": 24.66, "candleClose": "2026-09-20T23:59:59.999Z" }
+      ],
+      "source": {
+        "label": "Binance public market-data API",
+        "sourceUrl": "https://api.binance.com/api/v3/klines",
+        "refreshedAt": "2026-09-20T07:55:36.6828006Z",
+        "evidenceFlow": [
+          { "title": "K 线读取", "detail": "读取 SOL、BTC、BNB、ETH、UNI、SUI 的 USDT 现货 15m、1h、1d K 线，每个市场与周期最近 80 根。" },
+          { "title": "布林带计算", "detail": "以最近 20 根收盘价计算 SMA20 与总体标准差；上/下轨 = SMA20 ± 2σ。" }
+        ],
+        "metricDefinitions": [
+          { "label": "布林带位置", "definition": "%B =（现价 − 下轨）÷（上轨 − 下轨）；带宽 =（上轨 − 下轨）÷ 中轨。最近一根未收盘 K 线会变化。", "componentIds": ["crypto-focus-radar", "crypto-bollinger-playbook", "crypto-price-chart"] }
+        ],
+        "caveats": [
+          "覆盖六个指定 USDT 现货市场；最新 K 线在相应周期收盘前仍会变化。",
+          "布林带与条件化进场文本是描述性技术分析，不预测价格，也不构成投资建议。"
+        ]
+      },
+      "methods": [
+        { "language": "JavaScript", "code": "For each ticker/timeframe, take the latest 20 closes; middle = mean(closes); sigma = sqrt(mean((close - middle)^2)); upper = middle + 2*sigma; lower = middle - 2*sigma; pctB = (close - lower)/(upper - lower)." }
+      ]
     }
   },
   "surface": "dashboard"
