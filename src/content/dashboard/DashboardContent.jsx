@@ -62,7 +62,18 @@ function formatUpdated(value) { return value ? new Intl.DateTimeFormat("zh-CN", 
 function formatChartDate(value, interval) { const intraday = /[mh]/u.test(interval); return new Intl.DateTimeFormat("zh-CN", intraday ? { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" } : { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(/T/u.test(value) ? value : `${value}T00:00:00Z`)); }
 function standardDeviation(values) { if (values.length < 2) return null; const mean = average(values); return Math.sqrt(average(values.map(value => (value - mean) ** 2))); }
 function bollinger(values, index, period = 20) { const window = values.slice(Math.max(0, index - period + 1), index + 1); if (window.length < period) return { middle: null, upper: null, lower: null }; const middle = average(window); const deviation = standardDeviation(window); return { middle, upper: middle + 2 * deviation, lower: middle - 2 * deviation }; }
-function calculateBandSnapshot(rows, ticker, timeframe) { const closes = rows.map(row => row.close); const latest = rows.at(-1); if (!latest || closes.length < 20) return null; const band = bollinger(closes, closes.length - 1); const width = band.upper - band.lower; return { ticker, timeframe, close: latest.close, middle: band.middle, upper: band.upper, lower: band.lower, pctB: width ? (latest.close - band.lower) / width : null, bandwidthPct: band.middle ? width / band.middle * 100 : null, candleClose: latest.date }; }
+function calculateBandSnapshot(rows, ticker, timeframe) {
+  const closes = rows.map(row => row.close); const latest = rows.at(-1); const previous = rows.at(-2);
+  if (!latest || closes.length < 50) return null;
+  const band = bollinger(closes, closes.length - 1); const priorBand = bollinger(closes, closes.length - 2); const width = band.upper - band.lower; const priorWidth = priorBand.upper - priorBand.lower;
+  const fast = ema(closes, 12); const slow = ema(closes, 26); const macdSeries = fast.map((value, index) => value - slow[index]); const macdSignalSeries = ema(macdSeries, 9);
+  return {
+    ticker, timeframe, close: latest.close, previousClose: previous?.close ?? null, middle: band.middle, previousMiddle: priorBand.middle,
+    upper: band.upper, lower: band.lower, pctB: width ? (latest.close - band.lower) / width : null, bandwidthPct: band.middle ? width / band.middle * 100 : null,
+    bandwidthChangePct: priorWidth ? (width / priorWidth - 1) * 100 : null, ma20: band.middle, ma50: average(closes.slice(-50)), rsi14: rsi(closes),
+    macd: macdSeries.at(-1), macdSignal: macdSignalSeries.at(-1), candleClose: latest.date,
+  };
+}
 function bandPosition(item) { if (!item || !Number.isFinite(item.pctB)) return "数据不足"; if (item.pctB <= .15) return "下轨附近"; if (item.pctB < .45) return "中轨下方"; if (item.pctB <= .65) return "中轨附近"; if (item.pctB < .9) return "中轨上方"; return "上轨附近"; }
 function buildEntryPlan(frames) {
   const short = frames.get("15m"); const hourly = frames.get("1h"); const daily = frames.get("1d");
@@ -74,6 +85,63 @@ function buildEntryPlan(frames) {
   if (dailyBullish && nearHourlyLower && short.close < short.middle) return { tone: "watch", label: "候选回踩", detail: "日线仍在中轨上方，1H 接近下轨；需要 15m 先收回中轨确认。", trigger: `15m 收回 ${formatMoney(short.middle)}`, invalidation: `1H 跌破 ${formatMoney(hourly.lower)}` };
   if (dailyBullish && short.close >= short.middle && hourly.close >= hourly.middle) return { tone: "positive", label: "顺势确认", detail: "日线、1H 与 15m 均在各自中轨上方，属于顺势观察而非保证。", trigger: `守住 1H 中轨 ${formatMoney(hourly.middle)}`, invalidation: `15m 回落并失守 ${formatMoney(short.middle)}` };
   return { tone: "neutral", label: "等待确认", detail: "多周期位置尚未同步；先等待 15m 与 1H 给出同方向收盘。", trigger: `15m 收回 ${formatMoney(short.middle)} 且 1H 不失守 ${formatMoney(hourly.lower)}`, invalidation: `1H 跌破 ${formatMoney(hourly.lower)}` };
+}
+function describeFrame(frame, timeframe) {
+  if (!frame) return { timeframe, direction: "数据不足", detail: "等待该周期的 K 线数据。", tone: "neutral" };
+  const aboveMiddle = frame.close >= frame.middle; const aboveMa50 = Number.isFinite(frame.ma50) && frame.ma20 >= frame.ma50;
+  const rsiText = Number.isFinite(frame.rsi14) ? ` · RSI ${formatNumber(frame.rsi14, 1)}` : "";
+  const macdText = Number.isFinite(frame.macd) && Number.isFinite(frame.macdSignal) ? ` · MACD ${frame.macd >= frame.macdSignal ? "上方" : "下方"}` : "";
+  const trendText = Number.isFinite(frame.ma50) ? ` · MA20 ${aboveMa50 ? "高于" : "低于"} MA50` : "";
+  return { timeframe, direction: aboveMiddle ? "偏多结构" : "偏空结构", tone: aboveMiddle ? "positive" : "negative", detail: `${timeframe} 收盘${aboveMiddle ? "在" : "低于"}布林中轨 ${formatMoney(frame.middle)}${trendText}${rsiText}${macdText}` };
+}
+function buildLongShortDecision(frames) {
+  const fast = frames.get("15m"); const hourly = frames.get("1h"); const daily = frames.get("1d");
+  if (!fast || !hourly || !daily) return { tone: "neutral", label: "等待数据", activeSide: "观望", longScore: 0, shortScore: 0, evidence: [], long: {}, short: {}, noTrade: ["三个周期的数据尚未齐全。"] };
+  let longScore = 0; let shortScore = 0; const evidence = [];
+  const score = (side, points, detail) => { if (side === "long") longScore += points; else shortScore += points; evidence.push({ side, points, detail }); };
+  const dailyAbove = daily.close >= daily.middle; const hourlyAbove = hourly.close >= hourly.middle; const fastAbove = fast.close >= fast.middle;
+  score(dailyAbove ? "long" : "short", 2, `日线${dailyAbove ? "站上" : "失守"}布林中轨 ${formatMoney(daily.middle)}`);
+  if (Number.isFinite(daily.ma50)) score(daily.ma20 >= daily.ma50 ? "long" : "short", 1, `日线 MA20 ${daily.ma20 >= daily.ma50 ? "高于" : "低于"} MA50`);
+  score(hourlyAbove ? "long" : "short", 2, `1H ${hourlyAbove ? "站上" : "跌回"}中轨 ${formatMoney(hourly.middle)}`);
+  score(fastAbove ? "long" : "short", 1, `15m ${fastAbove ? "在" : "低于"}中轨 ${formatMoney(fast.middle)}`);
+  if (Number.isFinite(daily.rsi14)) {
+    if (daily.rsi14 >= 50 && daily.rsi14 < 70) score("long", 1, `日线 RSI ${formatNumber(daily.rsi14, 1)} 仍处于多头动能区`);
+    else if (daily.rsi14 < 50 && daily.rsi14 > 30) score("short", 1, `日线 RSI ${formatNumber(daily.rsi14, 1)} 偏向空头动能区`);
+  }
+  if (Number.isFinite(hourly.macd) && Number.isFinite(hourly.macdSignal)) score(hourly.macd >= hourly.macdSignal ? "long" : "short", 1, `1H MACD ${hourly.macd >= hourly.macdSignal ? "高于" : "低于"}信号线`);
+  const dailyBull = dailyAbove && (!Number.isFinite(daily.ma50) || daily.ma20 >= daily.ma50); const dailyBear = !dailyAbove && (!Number.isFinite(daily.ma50) || daily.ma20 <= daily.ma50);
+  const longConfirmed = dailyBull && hourlyAbove && fastAbove; const shortConfirmed = dailyBear && !hourlyAbove && !fastAbove;
+  const longAtRisk = daily.pctB >= .9 || (Number.isFinite(daily.rsi14) && daily.rsi14 >= 70); const shortAtRisk = daily.pctB <= .1 || (Number.isFinite(daily.rsi14) && daily.rsi14 <= 30);
+  const spread = Math.abs(longScore - shortScore);
+  let activeSide = "观望"; let label = "方向分歧"; let tone = "neutral"; let summary = "日线、1H 与 15m 尚未形成同方向闭环，先等待收盘确认。";
+  if (longConfirmed && longScore > shortScore && !longAtRisk) { activeSide = "多头"; label = "偏多 · 等 15m 确认"; tone = "positive"; summary = "日线定向、1H 结构与 15m 执行同向；只在 15m 收盘后评估，不追逐未收盘波动。"; }
+  else if (shortConfirmed && shortScore > longScore && !shortAtRisk) { activeSide = "空头"; label = "偏空 · 等 15m 确认"; tone = "negative"; summary = "日线定向、1H 结构与 15m 执行同向；仅适用于理解杠杆和爆仓风险的交易者。"; }
+  else if (spread <= 2) { label = "方向分歧"; summary = "多空评分接近，当前更像震荡区间；让价格先离开 1H 中轨附近。"; }
+  else if (dailyBull) { label = longAtRisk ? "多头过热 · 不追价" : "日线偏多 · 等回踩"; tone = "watch"; summary = longAtRisk ? "日线接近上轨或 RSI 偏热，避免把强势误判为低风险入场。" : "大方向尚偏多，但 1H 或 15m 尚未同步；只观察回踩后的确认。"; }
+  else if (dailyBear) { label = shortAtRisk ? "空头过伸 · 不追空" : "日线偏空 · 等反抽失败"; tone = "warning"; summary = shortAtRisk ? "日线靠近下轨或 RSI 偏低，避免在波动已经释放后追空。" : "大方向尚偏空，但 1H 或 15m 尚未同步；等待反抽不能收回中轨。"; }
+  const long = {
+    readiness: longConfirmed && !longAtRisk ? "可等待确认" : longAtRisk ? "不追价" : dailyBull ? "等待回踩" : "逆势，不启动",
+    setup: dailyBull ? "日线守住中轨，优先寻找顺趋势机会。" : "日线仍在中轨下方，做多属于逆趋势反弹。",
+    trigger: `15m 收盘站稳 ${formatMoney(fast.middle)}，并且 1H 不跌回 ${formatMoney(hourly.middle)} 下方`,
+    invalidation: `1H 收盘跌破下轨 ${formatMoney(hourly.lower)}`,
+    firstLevel: `1H 上轨 ${formatMoney(hourly.upper)}`,
+    secondLevel: `日线上轨 ${formatMoney(daily.upper)}`,
+  };
+  const short = {
+    readiness: shortConfirmed && !shortAtRisk ? "可等待确认" : shortAtRisk ? "不追空" : dailyBear ? "等待反抽失败" : "逆势，不启动",
+    setup: dailyBear ? "日线压在中轨下方，优先观察反抽后的转弱。" : "日线仍在中轨上方，做空属于逆趋势回撤。",
+    trigger: `15m 收盘跌回 ${formatMoney(fast.middle)} 下方，且 1H 不能收回 ${formatMoney(hourly.middle)}`,
+    invalidation: `1H 收盘站回上轨 ${formatMoney(hourly.upper)}`,
+    firstLevel: `1H 下轨 ${formatMoney(hourly.lower)}`,
+    secondLevel: `日线下轨 ${formatMoney(daily.lower)}`,
+  };
+  const noTrade = [];
+  if (daily.pctB >= .9) noTrade.push("日线已贴近上轨：不把强势当作低风险的做多理由。");
+  if (daily.pctB <= .1) noTrade.push("日线已贴近下轨：不把弱势当作低风险的做空理由。");
+  if (Math.abs(hourly.pctB - .5) <= .12) noTrade.push("1H 位于中轨附近：方向优势不够，等待收盘离开该区域。");
+  if (Number.isFinite(hourly.bandwidthChangePct) && hourly.bandwidthChangePct < -8) noTrade.push("1H 带宽正在收缩：可能是蓄势，不预设突破方向。");
+  if (!noTrade.length) noTrade.push("仍需将仓位由“入场到失效”的距离倒推；单笔风险和杠杆应先于方向判断。" );
+  return { tone, label, activeSide, summary, longScore, shortScore, evidence, frames: [describeFrame(daily, "日线"), describeFrame(hourly, "1H"), describeFrame(fast, "15m")], long, short, noTrade };
 }
 function dailyReturns(rows, periods = 60) { const closes = rows.slice(-(periods + 1)).map(row => row.close); return closes.slice(1).map((close, index) => close / closes[index] - 1).filter(Number.isFinite); }
 function pearsonCorrelation(left, right) { const size = Math.min(left.length, right.length); if (size < 3) return null; const a = left.slice(-size); const b = right.slice(-size); const meanA = average(a); const meanB = average(b); const numerator = a.reduce((sum, value, index) => sum + (value - meanA) * (b[index] - meanB), 0); const denominator = Math.sqrt(a.reduce((sum, value) => sum + (value - meanA) ** 2, 0) * b.reduce((sum, value) => sum + (value - meanB) ** 2, 0)); return denominator ? numerator / denominator : null; }
@@ -154,6 +222,20 @@ function FocusBollingerDetail({ ticker, frames }) {
   const plan = buildEntryPlan(frames); const rows = FOCUS_INTERVALS.map(interval => frames.get(interval.value)).filter(Boolean);
   return <div className="crypto-bollinger-detail" data-reviewed-rows><header><div><span>已选币种</span><strong>{ticker}/USDT</strong></div><div data-tone={plan.tone}><b>{plan.label}</b><p>{plan.detail}</p></div></header><div className="crypto-band-table-wrap"><table className="crypto-band-table"><thead><tr><th>周期</th><th>现价</th><th>位置</th><th>下轨</th><th>中轨</th><th>上轨</th><th>带宽</th></tr></thead><tbody>{rows.map(row => <tr key={row.timeframe}><th>{FOCUS_INTERVALS.find(interval => interval.value === row.timeframe)?.label ?? row.timeframe}</th><td>{formatMoney(row.close)}</td><td><span data-position={row.pctB >= .9 ? "upper" : row.pctB <= .15 ? "lower" : "middle"}>{bandPosition(row)}</span></td><td>{formatMoney(row.lower)}</td><td>{formatMoney(row.middle)}</td><td>{formatMoney(row.upper)}</td><td>{formatNumber(row.bandwidthPct, 2)}%</td></tr>)}</tbody></table></div><div className="crypto-entry-conditions"><div><span>等待触发</span><strong>{plan.trigger}</strong></div><div><span>失效条件</span><strong>{plan.invalidation}</strong></div></div></div>;
 }
+function DecisionScenario({ side, title, plan }) {
+  const items = [["结构前提", plan.setup], ["入场确认", plan.trigger], ["失效条件", plan.invalidation], ["第一观察位", plan.firstLevel], ["第二观察位", plan.secondLevel]];
+  return <article className="crypto-decision-scenario" data-side={side}><header><span>{side === "long" ? "LONG" : "SHORT"}</span><h3>{title}</h3><b>{plan.readiness}</b></header><dl>{items.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></article>;
+}
+function LongShortDecision({ ticker, decision }) {
+  if (!decision) return <div className="crypto-empty">暂无足够数据用于多空决策。</div>;
+  return <div className="crypto-long-short" data-reviewed-rows>
+    <header className="crypto-decision-header"><div><span>当前分析对象</span><strong>{ticker}/USDT</strong></div><div data-tone={decision.tone}><span>决策状态</span><b>{decision.label}</b><p>{decision.summary}</p></div></header>
+    <div className="crypto-decision-scoreboard" aria-label="多空条件评分"><div data-side="long"><span>多头条件</span><strong>{decision.longScore}</strong><small>日线 → 1H → 15m 的同向证据</small></div><div className="crypto-decision-divider"><span>对照</span><b>{decision.activeSide}</b><small>评分是条件覆盖度，不是胜率</small></div><div data-side="short"><span>空头条件</span><strong>{decision.shortScore}</strong><small>日线 → 1H → 15m 的同向证据</small></div></div>
+    <div className="crypto-frame-evidence">{decision.frames.map(frame => <article key={frame.timeframe} data-tone={frame.tone}><div><span>{frame.timeframe}</span><b>{frame.direction}</b></div><p>{frame.detail}</p></article>)}</div>
+    <div className="crypto-decision-scenarios"><DecisionScenario side="long" title="做多情景" plan={decision.long} /><DecisionScenario side="short" title="做空情景" plan={decision.short} /></div>
+    <div className="crypto-decision-evidence"><div><span>评分依据</span><ul>{decision.evidence.map((item, index) => <li key={`${item.side}-${index}`} data-side={item.side}><b>{item.side === "long" ? "+ 多" : "+ 空"} {item.points}</b>{item.detail}</li>)}</ul></div><aside><span>不交易 / 风控优先</span><ul>{decision.noTrade.map(item => <li key={item}>{item}</li>)}</ul><p>“第一/第二观察位”用于检查价格是否按情景运行；并非保证成交或收益。做空涉及合约、杠杆和爆仓风险。</p></aside></div>
+  </div>;
+}
 
 export function DashboardContent() {
   const { reviewedRows, snapshot } = useDataApp(); const seededRows = useMemo(() => reviewedRows("market_prices", ["ticker", "date"]), [reviewedRows]); const reviewedAlerts = useMemo(() => reviewedRows("watch_alerts", ["ticker", "label"]), [reviewedRows]); const reviewedSignals = useMemo(() => reviewedRows("technical_signals", ["ticker"]), [reviewedRows]); const seededFocusRows = useMemo(() => reviewedRows("focus_multitimeframe", ["ticker", "timeframe"]), [reviewedRows]);
@@ -163,7 +245,7 @@ export function DashboardContent() {
   useEffect(() => { let active = true; const run = async () => { if (active) await refresh(); }; run(); const timer = window.setInterval(run, 300_000); return () => { active = false; window.clearInterval(timer); }; }, []);
   useEffect(() => { let active = true; const run = async () => { if (active) await refreshFocus(); }; run(); const timer = window.setInterval(run, 60_000); return () => { active = false; window.clearInterval(timer); }; }, []);
   useEffect(() => { let active = true; const asset = ASSETS.find(item => item.ticker === selectedTicker); const option = CHART_INTERVALS.find(item => item.value === chartInterval); if (!asset || !option) return () => { active = false; }; setChartLoading(true); setChartRows(null); setChartError(null); fetchAssetRows(asset, chartInterval, option.limit).then(rows => { if (active) setChartRows(rows); }).catch(() => { if (active) setChartError("该周期的实时 K 线暂不可用，请稍后重试。"); }).finally(() => { if (active) setChartLoading(false); }); return () => { active = false; }; }, [selectedTicker, chartInterval]);
-  const marketRows = liveRows?.length ? liveRows : seededRows; const focusRows = focusLiveRows?.length ? focusLiveRows : seededFocusRows; const rowsByTicker = useMemo(() => new Map(ASSETS.map(asset => [asset.ticker, marketRows.filter(row => row.ticker === asset.ticker).sort((a, b) => a.date.localeCompare(b.date))])), [marketRows]); const focusByTicker = useMemo(() => new Map(FOCUS_TICKERS.map(ticker => [ticker, new Map(focusRows.filter(row => row.ticker === ticker).map(row => [row.timeframe, row]))])), [focusRows]);
+  const marketRows = liveRows?.length ? liveRows : seededRows; const focusRows = focusLiveRows?.length ? focusLiveRows : seededFocusRows; const rowsByTicker = useMemo(() => new Map(ASSETS.map(asset => [asset.ticker, marketRows.filter(row => row.ticker === asset.ticker).sort((a, b) => a.date.localeCompare(b.date))])), [marketRows]); const focusByTicker = useMemo(() => new Map(FOCUS_TICKERS.map(ticker => [ticker, new Map(focusRows.filter(row => row.ticker === ticker).map(row => [row.timeframe, row]))])), [focusRows]); const focusDecisions = useMemo(() => new Map(FOCUS_TICKERS.map(ticker => [ticker, buildLongShortDecision(focusByTicker.get(ticker) ?? new Map())])), [focusByTicker]); const selectedDecision = focusDecisions.get(selectedTicker);
   const technical = useMemo(() => ASSETS.map(asset => calculateTechnical(rowsByTicker.get(asset.ticker) ?? [], asset)).filter(Boolean), [rowsByTicker]); const technicalByTicker = useMemo(() => new Map(technical.map(item => [item.ticker, item])), [technical]); const selectedRows = rowsByTicker.get(selectedTicker) ?? []; const selected = technicalByTicker.get(selectedTicker); const chartOption = CHART_INTERVALS.find(item => item.value === chartInterval) ?? CHART_INTERVALS[4]; const displayedChartRows = chartRows ?? []; const chartLast = displayedChartRows.at(-1); const alerts = technical.flatMap(item => item.alerts); const categories = ["全部", ...new Set(ASSETS.map(asset => asset.category))];
   const visibleAssets = technical.filter(item => (category === "全部" || item.category === category) && `${item.ticker} ${item.asset}`.toLowerCase().includes(search.toLowerCase())); const analysis = useMemo(() => calculateMarketAnalysis(technical, rowsByTicker), [technical, rowsByTicker]); const visibleTickerSet = new Set(visibleAssets.map(item => item.ticker)); const visibleProfiles = analysis.profiles.filter(item => visibleTickerSet.has(item.ticker)); const dataTimestamp = updatedAt ?? snapshot?.generatedAt; const focusTimestamp = focusUpdatedAt ?? snapshot?.queries?.focus_multitimeframe?.source?.refreshedAt;
   return <article className="crypto-dashboard"><h1 className="crypto-sr-only">加密资产技术雷达</h1>
@@ -171,6 +253,7 @@ export function DashboardContent() {
     {refreshError && <p className="crypto-connection-note" role="status">{refreshError}</p>}
     <DataComponent id="crypto-focus-radar" queryId="focus_multitimeframe" kind="custom" variant="card" title="六币多周期雷达" description="SOL、BTC、BNB、ETH、UNI、SUI 的 15 分钟、1 小时和日线布林带（20, 2σ）位置。点击任一币种查看条件化进场方案。" sourceRows={focusRows} displayRows={focusRows}><FocusRadar framesByTicker={focusByTicker} selectedTicker={selectedTicker} onSelect={setSelectedTicker} /></DataComponent>
     <DataComponent id="crypto-bollinger-playbook" queryId="focus_multitimeframe" kind="custom" variant="card" title="布林带进场条件" description="“候选回踩”需等 15 分钟收盘确认；“顺势确认”要求 1 小时和 15 分钟同向。价位是观察与失效条件，不是交易指令。" sourceRows={focusRows.filter(row => row.ticker === selectedTicker)} displayRows={focusRows.filter(row => row.ticker === selectedTicker)}><FocusBollingerDetail ticker={selectedTicker} frames={focusByTicker.get(selectedTicker) ?? new Map()} /></DataComponent>
+    <DataComponent id="crypto-long-short-decision" queryId="focus_multitimeframe" kind="custom" variant="card" title="多空决策分析" description="按日线定方向、1H 验证结构、15m 等收盘触发；评分只汇总当前条件覆盖度，不是胜率或交易指令。做空只适用于理解合约与杠杆风险的人。" sourceRows={focusRows.filter(row => row.ticker === selectedTicker)} displayRows={selectedDecision ? [{ ticker: selectedTicker, activeSide: selectedDecision.activeSide, longScore: selectedDecision.longScore, shortScore: selectedDecision.shortScore, label: selectedDecision.label }] : []}><LongShortDecision ticker={selectedTicker} decision={selectedDecision} /></DataComponent>
     <DataComponent id="crypto-market-overview" queryId="technical_signals" kind="custom" variant="card" title="市场广度" description="按 26 个已选择、高流动性的 USDT 现货交易对统计；它不是整体加密市场总市值。" sourceRows={technical} displayRows={technical}><MarketStats indicators={technical} /></DataComponent>
     <section className="crypto-professional-analysis" aria-label="市场结构与分类轮动">
       <DataComponent id="crypto-market-structure" queryId="technical_signals" kind="custom" variant="card" title="市场结构与趋势广度" description="等权统计 26 个监控资产中站上均线、动量为正和趋势偏多的比例。广度不是市值加权的市场指数。" sourceRows={technical} displayRows={technical}><MarketStructure breadth={analysis.breadth} /></DataComponent>

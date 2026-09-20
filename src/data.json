@@ -41216,10 +41216,12 @@
         "refreshedAt": "2026-09-20T07:55:36.6828006Z",
         "evidenceFlow": [
           { "title": "K 线读取", "detail": "读取 SOL、BTC、BNB、ETH、UNI、SUI 的 USDT 现货 15m、1h、1d K 线，每个市场与周期最近 80 根。" },
-          { "title": "布林带计算", "detail": "以最近 20 根收盘价计算 SMA20 与总体标准差；上/下轨 = SMA20 ± 2σ。" }
+          { "title": "布林带计算", "detail": "以最近 20 根收盘价计算 SMA20 与总体标准差；上/下轨 = SMA20 ± 2σ。" },
+          { "title": "多空条件框架", "detail": "日线用于方向、1H 用于结构、15m 用于收盘触发；客户端对同一批 K 线计算 MA20/MA50、RSI(14)、MACD(12,26,9) 和布林带位置，再给出条件覆盖度与失效/观察位。" }
         ],
         "metricDefinitions": [
-          { "label": "布林带位置", "definition": "%B =（现价 − 下轨）÷（上轨 − 下轨）；带宽 =（上轨 − 下轨）÷ 中轨。最近一根未收盘 K 线会变化。", "componentIds": ["crypto-focus-radar", "crypto-bollinger-playbook", "crypto-price-chart"] }
+          { "label": "布林带位置", "definition": "%B =（现价 − 下轨）÷（上轨 − 下轨）；带宽 =（上轨 − 下轨）÷ 中轨。最近一根未收盘 K 线会变化。", "componentIds": ["crypto-focus-radar", "crypto-bollinger-playbook", "crypto-long-short-decision", "crypto-price-chart"] },
+          { "label": "多空条件评分", "definition": "评分把日线方向（2 分）、日线 MA20/MA50（1 分）、1H 中轨位置（2 分）、15m 中轨位置（1 分）、日线 RSI 动能（1 分）及 1H MACD 与信号线关系（1 分）分别归入多头或空头；它衡量条件是否同向，不表示概率、盈亏比或投资建议。", "componentIds": ["crypto-long-short-decision"] }
         ],
         "caveats": [
           "覆盖六个指定 USDT 现货市场；最新 K 线在相应周期收盘前仍会变化。",
